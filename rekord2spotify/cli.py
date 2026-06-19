@@ -36,7 +36,15 @@ def _resolve_usb_path(path):
 
 
 def _load_sessions(source_type, path):
-    """Load sessions from USB or local database."""
+    """Load sessions from USB, local database, or imported playlist file."""
+    # If path is a text/playlist file, try importing it
+    if path and Path(path).is_file():
+        ext = Path(path).suffix.lower()
+        if ext in (".txt", ".m3u", ".m3u8", ".csv"):
+            from .importer import import_playlist
+            data = import_playlist(path)
+            return data.get("sessions", [])
+
     if source_type == "local":
         from .rekordbox_db import extract_history_local, find_master_db
         db_path = path or find_master_db()
@@ -245,6 +253,36 @@ def playlist(ctx, path, session, name, dry_run):
     except Exception as e:
         click.echo(f"\nError: {e}", err=True)
         sys.exit(1)
+
+
+@main.command(name="import")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--name", "-n", default=None, help="Playlist name (default: filename)")
+def import_(file, name):
+    """Import a playlist file exported from Rekordbox.
+
+    Supports text, M3U, M3U8, and CSV formats.
+
+    \b
+    In Rekordbox: right-click a history playlist > Export Playlist >
+    choose text or M3U8 format. Then:
+
+    \b
+      rekord2spotify import ~/Desktop/history.txt
+      rekord2spotify export -p ~/Desktop/history.txt
+      rekord2spotify playlist -p ~/Desktop/history.txt
+    """
+    from .importer import import_playlist
+    data = import_playlist(file, name)
+    sessions = data.get("sessions", [])
+
+    if not sessions:
+        click.echo("No tracks found in file.")
+        return
+
+    session_data = sessions[0]
+    click.echo(f"\n{len(session_data['tracks'])} tracks\n")
+    click.echo(format_session_list(sessions, include_preview=True))
 
 
 if __name__ == "__main__":
