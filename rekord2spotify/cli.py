@@ -1,16 +1,12 @@
 """rekord2spotify — export rekordbox USB history as tracklists or Spotify playlists."""
 
-import os
-import sys
+import subprocess
+import time
 from pathlib import Path
 
 import questionary
 
-from .extractor import (
-    extract_history,
-    get_latest_session,
-    find_usb_drives,
-)
+from .extractor import extract_history, get_latest_session, find_usb_drives
 from .importer import import_playlist
 from .tracklist import format_tracklist, format_session_list
 
@@ -22,256 +18,211 @@ def main():
     print(" ──────────────")
     print()
 
-    # Step 1: Where's the history?
-    sources = _build_source_list()
-    choice = questionary.select("Where's your history?", choices=sources).ask()
-    if choice is None:
+    choice = questionary.select(
+        "Where's your history?",
+        choices=_build_sources()
+    ).ask()
+    if not choice:
         return
 
-    # Step 2: Load sessions
-    sessions = _load_from_choice(choice)
-
+    sessions = _load(choice)
     if not sessions:
         questionary.print("No history sessions found.", style="bold red")
         return
 
-    # Step 3: Pick session(s)
-    picked = _pick_sessions(sessions)
+    picked = _pick(sessions)
     if not picked:
         return
 
-    # Step 4: What to do?
-    _handle_output(picked)
+    _output(picked)
 
 
-def _build_source_list():
-    """Build list of available sources."""
+def _build_sources():
     sources = []
-
     usb = find_usb_drives()
-    for drive in usb:
-        name = Path(drive).name
+    for d in usb:
         sources.append(questionary.Choice(
-            title=f"💾 USB drive: {name} ({drive})",
-            value=("usb", drive)
+            title=f"💾 USB: {Path(d).name} ({d})",
+            value=("usb", d)
         ))
-
     if not usb:
         sources.append(questionary.Choice(
-            title="💾 USB drive (none detected — plug one in)",
+            title="💾 USB (none detected)",
             value=("usb_none", None),
             disabled="No USB drives found"
         ))
-
     sources.append(questionary.Choice(
-        title="🖥  Rekordbox 5 on this computer (export a history file first)",
-        value=("rekordbox5", None)
+        title="🖥  Rekordbox 5 (export a history file first)",
+        value=("r5", None)
     ))
-
     sources.append(questionary.Choice(
-        title="📁 Import from file (text, M3U, or Rekordbox export)",
+        title="📁 Import from file",
         value=("file", None)
     ))
-
     return sources
 
 
-def _load_from_choice(choice):
-    """Load sessions from the chosen source."""
-    source_type, path = choice
+def _load(choice):
+    source, path = choice
 
-    if source_type == "usb":
+    if source == "usb":
         questionary.print(f"\nReading {path} ...", style="dim")
-        data = extract_history(path)
-        return data.get("sessions", [])
+        return extract_history(path).get("sessions", [])
 
-    elif source_type == "usb_none":
-        questionary.print("No USB drive found.", style="bold red")
+    if source == "usb_none":
         return []
 
-    elif source_type == "rekordbox5":
-        questionary.print("\nRekordbox 5 stores history inside the app.")
-        questionary.print("You need to export it first:\n")
-        questionary.print("  In rekordbox: right-click any history playlist")
-        questionary.print("  → Export Playlist → choose text format")
-        questionary.print("  (Use the 'Export for KUVO' option for best results)\n")
-        questionary.print("  Files are saved as 'HISTORY YYYY-MM-DD.txt'\n")
+    if source == "r5":
+        return _load_r5()
 
-        # Try to find recent exports via Spotlight (bypasses macOS folder permissions)
-        recent = _find_recent_exports()
-        choices = []
-        if recent:
-            for f in recent:
-                choices.append(questionary.Choice(
-                    title=f"📄 {f.name} ({_time_ago(f)})",
-                    value=str(f)
-                ))
-        choices.append(questionary.Choice(
-            title="📂 Choose another file or paste path...",
-            value="__browse__"
-        ))
-
-        filepath = questionary.select(
-            "Pick an export file:",
-            choices=choices
-        ).ask()
-
-        if filepath is None:
-            return []
-        if filepath == "__browse__":
-            filepath = questionary.path(
-                "Path to exported file:",
-                only_directories=False,
-            ).ask()
-            if not filepath:
-                return []
-
-        questionary.print(f"\nImporting {Path(filepath).name} ...", style="dim")
-        data = import_playlist(filepath)
-        return data.get("sessions", [])
-
-    elif source_type == "file":
-        filepath = questionary.path(
-            "Path to file (text, M3U, or Rekordbox export):",
-            only_directories=False,
-        ).ask()
-        if not filepath:
-            return []
-
-        questionary.print(f"\nImporting {Path(filepath).name} ...", style="dim")
-        data = import_playlist(filepath)
-        return data.get("sessions", [])
+    if source == "file":
+        return _load_file()
 
     return []
 
 
-def _find_recent_exports():
-    """Find rekordbox history export files using Spotlight."""
-    recent = []
+def _load_r5():
+    questionary.print("\nRekordbox 5 stores history inside the app.")
+    questionary.print("You need to export it first:\n")
+    questionary.print("  In rekordbox: right-click any history playlist")
+    questionary.print("  → Export Playlist → choose text format")
+    questionary.print("  (Use the 'Export for KUVO' option for best results)\n")
+
+    choices = []
+    for f in _find_history_exports():
+        choices.append(questionary.Choice(
+            title=f"📄 {f.name} ({_time_ago(f)})",
+            value=str(f)
+        ))
+    choices.append(questionary.Choice(
+        title="📂 Choose another file or paste path...",
+        value="__browse__"
+    ))
+
+    filepath = questionary.select("Pick an export file:", choices=choices).ask()
+    if not filepath:
+        return []
+    if filepath == "__browse__":
+        filepath = questionary.path("Path to exported file:", only_directories=False).ask()
+        if not filepath:
+            return []
+
+    return _import_file(filepath)
+
+
+def _load_file():
+    filepath = questionary.path(
+        "Path to file (text, M3U, or Rekordbox export):",
+        only_directories=False,
+    ).ask()
+    if not filepath:
+        return []
+    return _import_file(filepath)
+
+
+def _import_file(filepath):
+    questionary.print(f"\nImporting {Path(filepath).name} ...", style="dim")
+    return import_playlist(filepath).get("sessions", [])
+
+
+def _find_history_exports():
+    """Find 'HISTORY*.txt' files via Spotlight (bypasses macOS folder permissions)."""
     try:
-        import subprocess
         result = subprocess.run(
             ["mdfind", "kMDItemDisplayName == 'HISTORY*' && kMDItemContentType == 'public.plain-text'"],
             capture_output=True, text=True, timeout=5
         )
         paths = [Path(p.strip()) for p in result.stdout.strip().split("\n") if p.strip()]
         paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        recent = [p for p in paths if p.exists() and p.stat().st_size > 100][:8]
+        return [p for p in paths if p.exists() and p.stat().st_size > 100][:8]
     except Exception:
-        pass
-    return recent
+        return []
 
 
 def _time_ago(path):
-    """Human-readable time ago."""
-    import time
     diff = time.time() - path.stat().st_mtime
-    if diff < 60:
-        return "just now"
-    if diff < 3600:
-        return f"{int(diff/60)}m ago"
-    if diff < 86400:
-        return f"{int(diff/3600)}h ago"
+    if diff < 60:       return "just now"
+    if diff < 3600:     return f"{int(diff/60)}m ago"
+    if diff < 86400:    return f"{int(diff/3600)}h ago"
     return f"{int(diff/86400)}d ago"
 
 
-def _pick_sessions(sessions):
-    """Let user pick one session, all, or latest."""
+def _pick(sessions):
     print()
     questionary.print(f"{len(sessions)} session(s)\n", style="bold")
     print(format_session_list(sessions, include_preview=True))
     print()
 
     choices = [
-        questionary.Choice(title="Latest session", value="latest"),
-        questionary.Choice(title="All sessions", value="all"),
+        questionary.Choice("Latest", "latest"),
+        questionary.Choice(f"All ({len(sessions)})", "all"),
     ]
     for i, s in enumerate(sessions, 1):
         choices.append(questionary.Choice(
-            title=f"  {s['name']} — {len(s['tracks'])} tracks",
-            value=i - 1
+            f"  {s['name']} — {len(s['tracks'])} tracks",
+            i - 1
         ))
 
     choice = questionary.select("Pick a session:", choices=choices).ask()
     if choice is None:
         return []
-
     if choice == "latest":
         s = get_latest_session({"sessions": sessions})
         return [s] if s else []
-    elif choice == "all":
+    if choice == "all":
         return sessions
-    else:
-        return [sessions[choice]]
+    return [sessions[choice]]
 
 
-def _handle_output(sessions):
-    """Ask user what to do with selected sessions."""
-    total_tracks = sum(len(s["tracks"]) for s in sessions)
-    if len(sessions) == 1:
-        label = f"{sessions[0]['name']} — {total_tracks} tracks"
-    else:
-        label = f"{len(sessions)} sessions — {total_tracks} tracks"
-
+def _output(sessions):
+    total = sum(len(s["tracks"]) for s in sessions)
+    label = f"{sessions[0]['name']} — {total} tracks" if len(sessions) == 1 else f"{len(sessions)} sessions — {total} tracks"
     print()
     questionary.print(label, style="bold")
     print()
 
-    action = questionary.select(
-        "What do you want?",
-        choices=[
-            questionary.Choice(title="📋 Print tracklist", value="print"),
-            questionary.Choice(title="💾 Save to file", value="save"),
-            questionary.Choice(title="🟢 Create Spotify playlist(s)", value="spotify"),
-            questionary.Choice(title="All three", value="all"),
-        ]
-    ).ask()
-
-    if action is None:
+    action = questionary.select("What do you want?", choices=[
+        questionary.Choice("📋 Print tracklist", "print"),
+        questionary.Choice("💾 Save to file", "save"),
+        questionary.Choice("🟢 Create Spotify playlist(s)", "spotify"),
+        questionary.Choice("All three", "all"),
+    ]).ask()
+    if not action:
         return
 
     do_print = action in ("print", "all")
     do_save = action in ("save", "all")
     do_spotify = action in ("spotify", "all")
 
-    # Spotify check once
     sp = None
     if do_spotify:
-        try:
-            from .spotify import _get_spotify_client, search_tracks_batch, create_spotify_playlist, _check_credentials
-            if not _check_credentials():
-                questionary.print("\nSpotify not set up.", style="bold red")
-                questionary.print("Create a .env file with SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET")
-                questionary.print("Get them at: https://developer.spotify.com/dashboard\n")
-                return
-            sp = _get_spotify_client()
-        except Exception as e:
-            questionary.print(f"\nSpotify error: {e}", style="bold red")
+        from .spotify import _get_spotify_client, search_tracks_batch, create_spotify_playlist, _check_credentials
+        if not _check_credentials():
+            questionary.print("\nSpotify not set up.", style="bold red")
+            questionary.print("Create .env with SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET")
+            questionary.print("Get them at: https://developer.spotify.com/dashboard\n")
             return
+        sp = _get_spotify_client()
 
     for session in sessions:
-        name = session["name"]
-        tracks = session["tracks"]
+        name, tracks = session["name"], session["tracks"]
 
         if do_print:
-            print()
-            print(format_tracklist(session, include_details=True))
+            print(f"\n{format_tracklist(session, include_details=True)}")
 
         if do_save:
             filename = f"{name}.txt".replace(" ", "_")
             Path(filename).write_text(format_tracklist(session, include_details=True) + "\n")
             questionary.print(f"  Saved {filename}")
 
-        if do_spotify and sp:
+        if sp:
             questionary.print(f"\n  Searching Spotify for {name} ...", style="dim")
             matches = search_tracks_batch(sp, tracks)
             if not matches:
-                questionary.print(f"  No tracks matched on Spotify.", style="bold red")
+                questionary.print("  No tracks matched.", style="bold red")
                 continue
-
-            print()
-            questionary.print(f"  Matched {len(matches)}/{len(tracks)} tracks")
-            url = create_spotify_playlist(sp, name, matches, f"Exported from {name} via rekord2spotify")
+            questionary.print(f"  Matched {len(matches)}/{len(tracks)}")
+            url = create_spotify_playlist(sp, name, matches, f"Exported from {name}")
             questionary.print(f"  {url}", style="bold green")
 
 

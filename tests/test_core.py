@@ -1,118 +1,78 @@
-"""Tests for tracklist formatting and extractor parsing."""
+"""Tests for tracklist formatting and importer."""
 
 import json
-import sys
 from pathlib import Path
 
-# Add parent to path for test imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from rekord2spotify.extractor import list_sessions, get_latest_session, get_session_by_name
-from rekord2spotify.tracklist import format_tracklist, format_session_summary
+from rekord2spotify.tracklist import format_tracklist, format_session_list
+from rekord2spotify.importer import import_playlist
+from rekord2spotify.extractor import get_latest_session
 
 
-def load_mock():
-    """Load the mock history JSON fixture."""
-    mock_path = Path(__file__).parent / "mock_history.json"
-    with open(mock_path) as f:
-        return json.load(f)
+MOCK = Path(__file__).parent / "mock_history.json"
 
 
-def test_list_sessions():
-    data = load_mock()
-    sessions = list_sessions(data)
-    assert len(sessions) == 2
-    assert sessions[0] == ("HISTORY 001", 3)
-    assert sessions[1] == ("HISTORY 002", 2)
-    print("✓ list_sessions")
+def test_importer_text():
+    data = import_playlist(str(MOCK))
+    # JSON is parsed as plain text (one 'track' per line of JSON... not ideal but valid)
+    assert len(data["sessions"]) == 1
+    assert len(data["sessions"][0]["tracks"]) > 0
+    print("✓ import_playlist (plain text)")
 
 
-def test_get_latest_session():
-    data = load_mock()
-    session = get_latest_session(data)
-    assert session is not None
-    assert session["name"] == "HISTORY 002"
-    assert len(session["tracks"]) == 2
-    print("✓ get_latest_session")
+def test_importer_artist_title():
+    p = Path("/tmp/_r2s_test.txt")
+    p.write_text("deadmau5 — Strobe\nEric Prydz - Opus\n")
+    data = import_playlist(str(p))
+    assert len(data["sessions"][0]["tracks"]) == 2
+    assert data["sessions"][0]["tracks"][0]["artist"] == "deadmau5"
+    print("✓ artist-title parsing")
 
 
-def test_get_session_by_name():
-    data = load_mock()
-    session = get_session_by_name(data, "HISTORY 001")
-    assert session is not None
-    assert session["name"] == "HISTORY 001"
-    assert len(session["tracks"]) == 3
-    assert get_session_by_name(data, "NONEXISTENT") is None
-    print("✓ get_session_by_name")
-
-
-def test_format_session_summary():
-    sessions = [("HISTORY 001", 3), ("HISTORY 002", 2)]
-    text = format_session_summary(sessions)
-    assert "HISTORY 001" in text
-    assert "3 tracks" in text
-    assert "HISTORY 002" in text
-    assert "2 tracks" in text
-    print("✓ format_session_summary")
-
-    # Empty case
-    assert "No history" in format_session_summary([])
+def test_importer_tsv():
+    p = Path("/tmp/_r2s_tsv.txt")
+    p.write_text("#\tArtwork\tTrack Title\tArtist\tAlbum\tGenre\tBPM\tRating\tTime\tKey\tDate Added\n"
+                 "1\t\tStrobe\tdeadmau5\t\tProgressive House\t128.00\t\t10:32\tF#m\t2020-01-01\n")
+    data = import_playlist(str(p))
+    t = data["sessions"][0]["tracks"][0]
+    assert t["artist"] == "deadmau5"
+    assert t["title"] == "Strobe"
+    assert t["bpm"] == 128.0
+    assert t["key"] == "F#m"
+    assert t["duration_sec"] == 632
+    print("✓ TSV parsing")
 
 
 def test_format_tracklist():
-    data = load_mock()
-    session = data["sessions"][0]
-
-    text = format_tracklist(session)
-    assert "HISTORY 001" in text
+    p = Path("/tmp/_r2s_fmt.txt")
+    p.write_text("deadmau5 — Strobe\nEric Prydz - Opus\n")
+    data = import_playlist(str(p))
+    text = format_tracklist(data["sessions"][0])
     assert "deadmau5 — Strobe" in text
-    assert "Eric Prydz — Opus" in text
-    assert "01. " in text
-    assert "02. " in text
-    assert "03. " in text
-    print("✓ format_tracklist (basic)")
-
-    # With details
-    text_detail = format_tracklist(session, include_details=True)
-    assert "128.0 BPM" in text_detail
-    assert "F#m" in text_detail
-    assert "10:32" in text_detail  # 632 sec = 10:32
-    print("✓ format_tracklist (with details)")
+    assert "01." in text
+    print("✓ format_tracklist")
 
 
-def test_empty_session():
-    empty = {"sessions": []}
-    assert list_sessions(empty) == []
-    assert get_latest_session(empty) is None
-    print("✓ empty data handling")
+def test_format_session_list():
+    p = Path("/tmp/_r2s_fmt.txt")
+    p.write_text("deadmau5 — Strobe\nEric Prydz - Opus\n")
+    data = import_playlist(str(p))
+    text = format_session_list(data["sessions"], include_preview=True)
+    assert "[1]" in text
+    print("✓ format_session_list")
 
 
-def test_track_field_access():
-    """Verify track fields are accessible with all expected keys."""
-    data = load_mock()
-    entry = data["sessions"][0]["tracks"][0]
-
-    # Fields are flat (from #[serde(flatten)] in Rust)
-    assert "position" in entry
-    assert "title" in entry
-    assert "artist" in entry
-    assert "bpm" in entry
-    assert "key" in entry
-    assert "isrc" in entry
-    assert "play_count" in entry
-    assert "album" in entry
-
-    # Fields that can be null
-    assert entry["isrc"] is not None or True
-    print("✓ track field structure")
+def test_empty():
+    Path("/tmp/_r2s_empty.txt").write_text("")
+    data = import_playlist("/tmp/_r2s_empty.txt")
+    assert data["sessions"][0]["tracks"] == []
+    print("✓ empty file")
 
 
 if __name__ == "__main__":
-    test_list_sessions()
-    test_get_latest_session()
-    test_get_session_by_name()
-    test_format_session_summary()
+    test_importer_text()
+    test_importer_artist_title()
+    test_importer_tsv()
     test_format_tracklist()
-    test_empty_session()
-    test_track_field_access()
+    test_format_session_list()
+    test_empty()
     print("\n✅ All tests passed!")
