@@ -92,25 +92,26 @@ def _load_from_choice(choice):
     elif source_type == "rekordbox5":
         questionary.print("\nRekordbox 5 stores history inside the app.")
         questionary.print("You need to export it first:\n")
-        questionary.print("  In rekordbox: right-click a history playlist")
+        questionary.print("  In rekordbox: right-click any history playlist")
         questionary.print("  → Export Playlist → choose text format")
         questionary.print("  (Use the 'Export for KUVO' option for best results)\n")
 
         # Try to find recent exports
         recent = _find_recent_exports()
         choices = []
-        for f in recent:
-            choices.append(questionary.Choice(
-                title=f"📄 {f.name} ({_time_ago(f)})",
-                value=str(f)
-            ))
+        if recent:
+            for f in recent:
+                choices.append(questionary.Choice(
+                    title=f"📄 {f.name} ({_time_ago(f)})",
+                    value=str(f)
+                ))
         choices.append(questionary.Choice(
-            title="📂 Choose another file...",
+            title="📂 Type or paste a file path...",
             value="__browse__"
         ))
 
         filepath = questionary.select(
-            "Found these recent exports.\nPick one or choose another file:",
+            "Pick an export file:",
             choices=choices
         ).ask()
 
@@ -146,7 +147,16 @@ def _load_from_choice(choice):
 def _find_recent_exports():
     """Find recently modified rekordbox export files."""
     recent = []
-    dirs = [Path.home() / "Documents", Path.home() / "Desktop", Path.home() / "Downloads"]
+    dirs = [Path.home() / "Desktop", Path.home() / "Downloads"]
+    # Documents is often permission-restricted on macOS, try it but don't fail
+    docs = Path.home() / "Documents"
+    if docs.exists():
+        try:
+            next(docs.iterdir())
+            dirs.insert(0, docs)
+        except (PermissionError, StopIteration):
+            pass
+
     for d in dirs:
         if not d.exists():
             continue
@@ -156,7 +166,6 @@ def _find_recent_exports():
             continue
         for f in entries:
             if f.suffix.lower() in (".txt", ".m3u", ".m3u8", ".csv") and f.stat().st_size > 100:
-                # Quick check if it looks like a playlist
                 try:
                     first_bytes = f.read_bytes()[:50]
                     if b"#EXTM3U" in first_bytes or b"Track Title" in first_bytes or b"Artist" in first_bytes:
