@@ -115,6 +115,20 @@ def _parse_rekordbox_tsv(lines: List[str]) -> List[dict]:
             parts = title.split(" - ", 1)
             artist, title = parts[0].strip(), parts[1].strip()
 
+        bpm = None
+        try:
+            bpm = float(bpm_str) if bpm_str else None
+        except ValueError:
+            pass
+
+        duration_sec = None
+        try:
+            parts = time_str.split(":")
+            if len(parts) == 2:
+                duration_sec = int(parts[0]) * 60 + int(parts[1])
+        except (ValueError, IndexError):
+            pass
+
         tracks.append({
             "artist": artist,
             "title": title,
