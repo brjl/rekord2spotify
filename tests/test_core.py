@@ -90,22 +90,20 @@ def test_empty_session():
 def test_track_field_access():
     """Verify track fields are accessible with all expected keys."""
     data = load_mock()
-    track = data["sessions"][0]["tracks"][0]
+    entry = data["sessions"][0]["tracks"][0]
 
-    # These are the fields our Rust extractor emits
-    assert "position" in track
-    assert "track" in track
-    t = track["track"]
-    assert "title" in t
-    assert "artist" in t
-    assert "bpm" in t
-    assert "key" in t
-    assert "isrc" in t
-    assert "play_count" in t
-    assert "album" in t
+    # Fields are flat (from #[serde(flatten)] in Rust)
+    assert "position" in entry
+    assert "title" in entry
+    assert "artist" in entry
+    assert "bpm" in entry
+    assert "key" in entry
+    assert "isrc" in entry
+    assert "play_count" in entry
+    assert "album" in entry
 
     # Fields that can be null
-    assert t["isrc"] is not None or True  # can be null
+    assert entry["isrc"] is not None or True
     print("✓ track field structure")
 
 

@@ -1,160 +1,233 @@
 """CLI for rekord2spotify."""
 
 import sys
-import click
 from pathlib import Path
 
-from .extractor import extract_history, list_sessions, get_latest_session
-from .tracklist import format_tracklist, format_session_summary
+import click
+
+from .extractor import (
+    extract_history,
+    list_sessions,
+    get_latest_session,
+    get_session_by_name,
+    find_usb_drives,
+)
+from .tracklist import format_tracklist, format_session_summary, format_session_list
+
+
+def _resolve_path(path):
+    """Resolve path: auto-detect USB if not provided, otherwise use given path."""
+    if path:
+        return path
+
+    usb_drives = find_usb_drives()
+    if not usb_drives:
+        click.echo("No rekordbox USB drives found.", err=True)
+        click.echo("Plug in a USB or use: rekord2spotify show --path /Volumes/DRIVE")
+        sys.exit(1)
+
+    if len(usb_drives) == 1:
+        drive = usb_drives[0]
+        click.echo(f"Drive: {drive}")
+        return drive
+
+    click.echo("Multiple drives found. Pick one:")
+    for d in usb_drives:
+        click.echo(f"  rekord2spotify show --path {d}")
+    sys.exit(1)
+
+
+def _resolve_session(data, session):
+    """Resolve session by index, name, or 'latest'."""
+    sessions = data.get("sessions", [])
+    if not sessions:
+        click.echo("No history sessions found.", err=True)
+        sys.exit(1)
+
+    if session is None or session == "latest":
+        session_data = get_latest_session(data)
+        if not session_data:
+            click.echo("No sessions found.", err=True)
+            sys.exit(1)
+        return session_data
+
+    # Try numeric index (1-based)
+    try:
+        idx = int(session) - 1
+        if 0 <= idx < len(sessions):
+            return sessions[idx]
+    except ValueError:
+        pass
+
+    # Try exact name match
+    session_data = get_session_by_name(data, session)
+    if session_data:
+        return session_data
+
+    # Try partial name match (case-insensitive)
+    session_lower = session.lower()
+    for s in sessions:
+        if session_lower in s["name"].lower():
+            return s
+
+    # Not found
+    click.echo(f"Session '{session}' not found.", err=True)
+    click.echo(format_session_list(sessions), err=True)
+    sys.exit(1)
+
+
+# Shared options
+_path_option = click.option(
+    "--path", "-p", default=None,
+    help="Path to USB drive or export.pdb (auto-detected if omitted)"
+)
+_session_arg = click.argument("session", required=False)
 
 
 @click.group()
 @click.version_option(version="0.1.0")
 def main():
-    """Export rekordbox USB history as tracklists or Spotify playlists.
+    """rekord2spotify — export rekordbox USB history as tracklists or Spotify playlists.
 
-    Reads export.pdb directly from your rekordbox-exported USB drive.
+    Plug in your rekordbox USB and run:
+
+    \b
+        rekord2spotify show         # list sessions
+        rekord2spotify export       # text tracklist (latest session)
+        rekord2spotify export 2     # export session #2
+        rekord2spotify playlist     # create Spotify playlist
     """
     pass
 
 
 @main.command()
-@click.argument("path", type=click.Path(exists=True))
-def list(path):
-    """List all history sessions found on a USB drive.
+@_path_option
+def show(path):
+    """Show all history sessions on a USB drive."""
+    path = _resolve_path(path)
+    data = extract_history(path)
+    sessions = data.get("sessions", [])
 
-    PATH can be the USB mount point or direct path to export.pdb.
-    """
-    try:
-        data = extract_history(path)
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+    if not sessions:
+        click.echo("No history sessions found.")
+        return
 
-    sessions = list_sessions(data)
-    click.echo(format_session_summary(sessions))
+    click.echo(f"\n{len(sessions)} session(s)\n")
+    click.echo(format_session_list(sessions, include_preview=True))
 
 
 @main.command()
-@click.argument("path", type=click.Path(exists=True))
-@click.option("--session", "-s", default="latest",
-              help="Session name (e.g. 'HISTORY 001') or 'latest'")
-@click.option("--details", "-d", is_flag=True,
-              help="Include BPM, key, and duration")
-@click.option("--output", "-o", type=click.Path(),
-              help="Write to file instead of stdout")
+@_path_option
+@_session_arg
+@click.option("--details", "-d", is_flag=True, help="Include BPM, key, and duration")
+@click.option("--output", "-o", type=click.Path(), help="Write to file")
 def export(path, session, details, output):
-    """Export a history session as a text tracklist.
+    """Export a session as a text tracklist.
 
-    Example:
-        rekord2spotify export /Volumes/USB_DRIVE
-        rekord2spotify export /Volumes/USB_DRIVE -s "HISTORY 003" -d
+    SESSION: number (1 = first), name, or omit for latest.
+
+    \b
+    Examples:
+      rekord2spotify export
+      rekord2spotify export 2
+      rekord2spotify export 1 -d
+      rekord2spotify export -o my_set.txt
     """
-    try:
-        data = extract_history(path)
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-    if session == "latest":
-        session_data = get_latest_session(data)
-    else:
-        from .extractor import get_session_by_name
-        session_data = get_session_by_name(data, session)
-
-    if not session_data:
-        click.echo(f"Session '{session}' not found.", err=True)
-        avail = [s["name"] for s in data.get("sessions", [])]
-        if avail:
-            click.echo(f"Available: {', '.join(avail)}", err=True)
-        sys.exit(1)
+    path = _resolve_path(path)
+    data = extract_history(path)
+    session_data = _resolve_session(data, session)
 
     text = format_tracklist(session_data, include_details=details)
 
     if output:
         Path(output).write_text(text + "\n")
-        click.echo(f"Tracklist written to {output}")
+        click.echo(f"Saved to {output}")
     else:
         click.echo(text)
 
 
 @main.command()
-@click.argument("path", type=click.Path(exists=True))
-@click.option("--session", "-s", default="latest",
-              help="Session name (e.g. 'HISTORY 001') or 'latest'")
-@click.option("--name", "-n", default=None,
-              help="Name for the Spotify playlist (default: session name)")
-@click.option("--dry-run", is_flag=True,
-              help="Search tracks but don't create playlist")
+@_path_option
+@_session_arg
+@click.option("--name", "-n", default=None, help="Playlist name (default: session name)")
+@click.option("--dry-run", is_flag=True, help="Search but don't create playlist")
 def playlist(path, session, name, dry_run):
     """Create a Spotify playlist from a history session.
 
-    Requires Spotify API credentials:
-      SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET environment variables
-      or a .env file in the current directory.
+    SESSION: number (1 = first), name, or omit for latest.
 
-    Example:
-        rekord2spotify playlist /Volumes/USB_DRIVE
-        rekord2spotify playlist /Volumes/USB_DRIVE -s "HISTORY 002" -n "My Set"
-        rekord2spotify playlist /Volumes/USB_DRIVE --dry-run
+    One-time Spotify setup:
+      1. Go to https://developer.spotify.com/dashboard
+      2. Create an app + add http://localhost:8888/callback as redirect URI
+      3. Create .env with SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET
+
+    \b
+    Examples:
+      rekord2spotify playlist
+      rekord2spotify playlist 2
+      rekord2spotify playlist -n "My Set"
+      rekord2spotify playlist --dry-run
     """
-    try:
-        data = extract_history(path)
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-    if session == "latest":
-        session_data = get_latest_session(data)
-    else:
-        from .extractor import get_session_by_name
-        session_data = get_session_by_name(data, session)
-
-    if not session_data:
-        click.echo(f"Session '{session}' not found.", err=True)
-        avail = [s["name"] for s in data.get("sessions", [])]
-        if avail:
-            click.echo(f"Available: {', '.join(avail)}", err=True)
-        sys.exit(1)
+    path = _resolve_path(path)
+    data = extract_history(path)
+    session_data = _resolve_session(data, session)
 
     tracks = session_data["tracks"]
-    click.echo(f"Session: {session_data['name']} — {len(tracks)} tracks")
-    click.echo()
+    session_name = session_data["name"]
+    click.echo(f"\n{session_name} — {len(tracks)} tracks\n")
 
-    # Import Spotify module only when needed (so list/export work without creds)
-    from .spotify import _get_spotify_client, search_tracks_batch, create_spotify_playlist
+    from .spotify import (
+        _get_spotify_client,
+        search_tracks_batch,
+        create_spotify_playlist,
+        _check_credentials,
+    )
 
-    try:
-        sp = _get_spotify_client()
-    except RuntimeError as e:
-        click.echo(f"Error: {e}", err=True)
+    if not _check_credentials():
+        click.echo("Spotify credentials not set up.\n")
+        click.echo("Quick setup:")
+        click.echo("  1. Go to https://developer.spotify.com/dashboard")
+        click.echo("  2. Create an app (name it 'rekord2spotify')")
+        click.echo("  3. In Settings, add Redirect URI: http://localhost:8888/callback")
+        click.echo("  4. Copy Client ID and Client Secret")
+        click.echo("  5. Create .env file:")
+        click.echo("       echo 'SPOTIPY_CLIENT_ID=YOUR_ID' >> .env")
+        click.echo("       echo 'SPOTIPY_CLIENT_SECRET=YOUR_SECRET' >> .env")
+        click.echo("\nThen run: rekord2spotify playlist")
         sys.exit(1)
 
-    click.echo("Matching tracks to Spotify...")
+    sp = _get_spotify_client()
+
+    click.echo("Searching Spotify...")
     matches = search_tracks_batch(sp, tracks)
-
     click.echo()
-    matched_count = len(matches)
-    click.echo(f"Matched {matched_count}/{len(tracks)} tracks")
 
-    unmatched = len(tracks) - matched_count
-    if unmatched > 0:
-        click.echo(f"⚠ {unmatched} track(s) could not be found on Spotify")
+    matched = len(matches)
+    total = len(tracks)
+    pct = int(matched / total * 100) if total else 0
+    click.echo(f"Matched: {matched}/{total} ({pct}%)")
 
-    if dry_run or matched_count == 0:
-        if dry_run:
-            click.echo("\nDry run — no playlist created.")
+    unmatched = total - matched
+    if unmatched:
+        click.echo(f"Not found: {unmatched}")
+
+    if dry_run:
+        click.echo("\n(Dry run — no playlist created)")
         return
 
-    # Create playlist
-    playlist_name = name or session_data["name"]
-    description = f"Exported from {session_data['name']} via rekord2spotify"
+    if matched == 0:
+        click.echo("\nNo tracks found on Spotify.")
+        return
+
+    playlist_name = name or session_name
+    description = f"Exported from {session_name} via rekord2spotify"
 
     try:
         url = create_spotify_playlist(sp, playlist_name, matches, description)
-        click.echo(f"\n✅ Playlist created: {url}")
+        click.echo(f"\n  {playlist_name}")
+        click.echo(f"  {url}")
     except Exception as e:
-        click.echo(f"\nError creating playlist: {e}", err=True)
+        click.echo(f"\nError: {e}", err=True)
         sys.exit(1)
 
 

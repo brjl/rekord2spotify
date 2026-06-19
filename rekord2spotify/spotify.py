@@ -7,6 +7,16 @@ import os
 from pathlib import Path
 
 
+def _check_credentials() -> bool:
+    """Check if Spotify credentials are set up."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+    return bool(os.environ.get("SPOTIPY_CLIENT_ID") and os.environ.get("SPOTIPY_CLIENT_SECRET"))
+
+
 def _get_spotify_client() -> spotipy.Spotify:
     """Create an authenticated Spotify client.
 
@@ -128,11 +138,10 @@ def search_tracks_batch(sp: spotipy.Spotify, tracks: list) -> list:
     """
     results = []
     for i, entry in enumerate(tracks):
-        track = entry.get("track", {})
-        artist = track.get("artist", "Unknown Artist")
-        title = track.get("title", "Unknown Track")
-        isrc = track.get("isrc")
-        duration = track.get("duration_sec")
+        artist = entry.get("artist", "Unknown Artist")
+        title = entry.get("title", "Unknown Track")
+        isrc = entry.get("isrc")
+        duration = entry.get("duration_sec")
 
         position = entry.get("position", i + 1)
         print(f"  [{position}/{len(tracks)}] Searching: {artist} — {title} ...", end=" ")
