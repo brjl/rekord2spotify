@@ -1,0 +1,93 @@
+{  "sessions": [
+    {
+      "name": "HISTORY 001",
+      "tracks": [
+        {
+          "position": 1,
+          "track": {
+            "title": "Strobe",
+            "artist": "deadmau5",
+            "bpm": 128.0,
+            "duration_sec": 632,
+            "key": "F#m",
+            "genre": "Progressive House",
+            "isrc": "GBUM70903636",
+            "album": null,
+            "label": "mau5trap",
+            "play_count": 42,
+            "mix_name": "Club Edit"
+          }
+        },
+        {
+          "position": 2,
+          "track": {
+            "title": "Opus",
+            "artist": "Eric Prydz",
+            "bpm": 128.0,
+            "duration_sec": 548,
+            "key": "Dm",
+            "genre": "Progressive House",
+            "isrc": null,
+            "album": "Opus",
+            "label": "Pryda",
+            "play_count": 15,
+            "mix_name": null
+          }
+        },
+        {
+          "position": 3,
+          "track": {
+            "title": "Grey Unknown White Label",
+            "artist": "Unknown Artist",
+            "bpm": 130.0,
+            "duration_sec": 420,
+            "key": null,
+            "genre": null,
+            "isrc": null,
+            "album": null,
+            "label": null,
+            "play_count": 1,
+            "mix_name": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "HISTORY 002",
+      "tracks": [
+        {
+          "position": 1,
+          "track": {
+            "title": "Innerbloom",
+            "artist": "RUFUS DU SOL",
+            "bpm": 120.0,
+            "duration_sec": 576,
+            "key": "Cm",
+            "genre": "Deep House",
+            "isrc": "AUSW21500037",
+            "album": "Bloom",
+            "label": "Sweat It Out",
+            "play_count": 23,
+            "mix_name": null
+          }
+        },
+        {
+          "position": 2,
+          "track": {
+            "title": "Strobe",
+            "artist": "deadmau5",
+            "bpm": 128.0,
+            "duration_sec": 632,
+            "key": "F#m",
+            "genre": "Progressive House",
+            "isrc": "GBUM70903636",
+            "album": null,
+            "label": "mau5trap",
+            "play_count": 43,
+            "mix_name": null
+          }
+        }
+      ]
+    }
+  ]
+}

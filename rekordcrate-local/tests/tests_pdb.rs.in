@@ -1,0 +1,24 @@
+#[test]
+#[allow(non_snake_case)]
+fn pdb_{name}() {{
+    println!("Parsing file: {filepath}");
+    let data = include_bytes!("{filepath}").as_slice();
+    let mut reader = Cursor::new(data);
+    let mut db = Database::open_non_persistent(&mut reader, DatabaseType::Plain).expect("failed to open database");
+    println!("{{:#?}}", db.get_header());
+
+    let tables = db.get_header().tables.clone();
+    for (i, table) in tables.iter().enumerate() {{
+        let id = TableIndex::from(i);
+        println!("Table {{:?}}: {{:?}}", id, table.page_type);
+        if matches!(table.page_type, PageType::Unknown(_)) {{
+            println!("Skipping table {{:?}} with unknown type {{:?}}", id, table.page_type);
+            continue;
+        }}
+        let mut page_iter = db.iter_pages_for_table(id).expect("failed to read pages");
+
+        while let Some(page) = page_iter.next().expect("failed to load page") {{
+            println!("  {{:?}}", page);
+        }}
+    }}
+}}
