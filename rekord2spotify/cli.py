@@ -7,49 +7,63 @@ import click
 
 from .extractor import (
     extract_history,
-    list_sessions,
     get_latest_session,
     get_session_by_name,
     find_usb_drives,
 )
-from .tracklist import format_tracklist, format_session_summary, format_session_list
+from .tracklist import format_tracklist, format_session_list
 
 
-def _resolve_path(path):
-    """Resolve path: auto-detect USB if not provided, otherwise use given path."""
+def _resolve_usb_path(path):
+    """Auto-detect USB if not provided."""
     if path:
         return path
 
     usb_drives = find_usb_drives()
     if not usb_drives:
         click.echo("No rekordbox USB drives found.", err=True)
-        click.echo("Plug in a USB or use: rekord2spotify show --path /Volumes/DRIVE")
+        click.echo("Plug in a USB or specify --path", err=True)
         sys.exit(1)
 
     if len(usb_drives) == 1:
-        drive = usb_drives[0]
-        click.echo(f"Drive: {drive}")
-        return drive
+        click.echo(f"Drive: {usb_drives[0]}")
+        return usb_drives[0]
 
-    click.echo("Multiple drives found. Pick one:")
+    click.echo("Multiple drives:", err=True)
     for d in usb_drives:
-        click.echo(f"  rekord2spotify show --path {d}")
+        click.echo(f"  {d}", err=True)
     sys.exit(1)
 
 
-def _resolve_session(data, session):
+def _load_sessions(source_type, path):
+    """Load sessions from USB or local database."""
+    if source_type == "local":
+        from .rekordbox_db import extract_history_local, find_master_db
+        db_path = path or find_master_db()
+        if not db_path:
+            click.echo("Rekordbox 6/7 master.db not found.", err=True)
+            click.echo("Expected: ~/Library/Pioneer/rekordbox/master.db", err=True)
+            sys.exit(1)
+        data = extract_history_local(db_path)
+    else:
+        path = _resolve_usb_path(path)
+        data = extract_history(path)
+
+    return data.get("sessions", [])
+
+
+def _resolve_session(sessions, session):
     """Resolve session by index, name, or 'latest'."""
-    sessions = data.get("sessions", [])
     if not sessions:
         click.echo("No history sessions found.", err=True)
         sys.exit(1)
 
     if session is None or session == "latest":
-        session_data = get_latest_session(data)
-        if not session_data:
+        s = get_latest_session({"sessions": sessions})
+        if not s:
             click.echo("No sessions found.", err=True)
             sys.exit(1)
-        return session_data
+        return s
 
     # Try numeric index (1-based)
     try:
@@ -59,54 +73,58 @@ def _resolve_session(data, session):
     except ValueError:
         pass
 
-    # Try exact name match
-    session_data = get_session_by_name(data, session)
-    if session_data:
-        return session_data
+    # Try exact name
+    s = get_session_by_name({"sessions": sessions}, session)
+    if s:
+        return s
 
-    # Try partial name match (case-insensitive)
+    # Try partial match
     session_lower = session.lower()
     for s in sessions:
         if session_lower in s["name"].lower():
             return s
 
-    # Not found
     click.echo(f"Session '{session}' not found.", err=True)
     click.echo(format_session_list(sessions), err=True)
     sys.exit(1)
 
 
 # Shared options
-_path_option = click.option(
-    "--path", "-p", default=None,
-    help="Path to USB drive or export.pdb (auto-detected if omitted)"
-)
+_path_option = click.option("--path", "-p", default=None, help="Path to USB or master.db")
 _session_arg = click.argument("session", required=False)
 
 
 @click.group()
 @click.version_option(version="0.1.0")
-def main():
-    """rekord2spotify — export rekordbox USB history as tracklists or Spotify playlists.
-
-    Plug in your rekordbox USB and run:
+@click.option("--source", "-s", "source_type",
+              type=click.Choice(["usb", "local"]), default="usb",
+              help="Data source: usb (default) or local (rekordbox 6/7)")
+@click.pass_context
+def main(ctx, source_type):
+    """rekord2spotify — export rekordbox history as tracklists or Spotify playlists.
 
     \b
-        rekord2spotify show         # list sessions
-        rekord2spotify export       # text tracklist (latest session)
-        rekord2spotify export 2     # export session #2
-        rekord2spotify playlist     # create Spotify playlist
+    USB mode (plug in your drive):
+      rekord2spotify show
+      rekord2spotify export
+      rekord2spotify playlist
+
+    \b
+    Rekordbox 6/7 local database:
+      rekord2spotify --source local show
+      rekord2spotify --source local export
+      rekord2spotify --source local playlist
     """
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["source_type"] = source_type
 
 
 @main.command()
 @_path_option
-def show(path):
-    """Show all history sessions on a USB drive."""
-    path = _resolve_path(path)
-    data = extract_history(path)
-    sessions = data.get("sessions", [])
+@click.pass_context
+def show(ctx, path):
+    """Show all history sessions."""
+    sessions = _load_sessions(ctx.obj["source_type"], path)
 
     if not sessions:
         click.echo("No history sessions found.")
@@ -121,7 +139,8 @@ def show(path):
 @_session_arg
 @click.option("--details", "-d", is_flag=True, help="Include BPM, key, and duration")
 @click.option("--output", "-o", type=click.Path(), help="Write to file")
-def export(path, session, details, output):
+@click.pass_context
+def export(ctx, path, session, details, output):
     """Export a session as a text tracklist.
 
     SESSION: number (1 = first), name, or omit for latest.
@@ -130,13 +149,11 @@ def export(path, session, details, output):
     Examples:
       rekord2spotify export
       rekord2spotify export 2
-      rekord2spotify export 1 -d
+      rekord2spotify export -d
       rekord2spotify export -o my_set.txt
     """
-    path = _resolve_path(path)
-    data = extract_history(path)
-    session_data = _resolve_session(data, session)
-
+    sessions = _load_sessions(ctx.obj["source_type"], path)
+    session_data = _resolve_session(sessions, session)
     text = format_tracklist(session_data, include_details=details)
 
     if output:
@@ -149,9 +166,10 @@ def export(path, session, details, output):
 @main.command()
 @_path_option
 @_session_arg
-@click.option("--name", "-n", default=None, help="Playlist name (default: session name)")
+@click.option("--name", "-n", default=None, help="Playlist name")
 @click.option("--dry-run", is_flag=True, help="Search but don't create playlist")
-def playlist(path, session, name, dry_run):
+@click.pass_context
+def playlist(ctx, path, session, name, dry_run):
     """Create a Spotify playlist from a history session.
 
     SESSION: number (1 = first), name, or omit for latest.
@@ -168,9 +186,8 @@ def playlist(path, session, name, dry_run):
       rekord2spotify playlist -n "My Set"
       rekord2spotify playlist --dry-run
     """
-    path = _resolve_path(path)
-    data = extract_history(path)
-    session_data = _resolve_session(data, session)
+    sessions = _load_sessions(ctx.obj["source_type"], path)
+    session_data = _resolve_session(sessions, session)
 
     tracks = session_data["tracks"]
     session_name = session_data["name"]
@@ -197,7 +214,6 @@ def playlist(path, session, name, dry_run):
         sys.exit(1)
 
     sp = _get_spotify_client()
-
     click.echo("Searching Spotify...")
     matches = search_tracks_batch(sp, tracks)
     click.echo()
