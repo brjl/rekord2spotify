@@ -1,120 +1,69 @@
 # rekord2spotify
 
-Export rekordbox USB history as text tracklists or Spotify playlists.
-
-Reads `export.pdb` directly from your rekordbox-exported USB drive — no need to open the rekordbox app.
-
-## How it works
+Interactive CLI to export rekordbox history as tracklists or Spotify playlists.
 
 ```
-USB Stick (/Volumes/MY_USB)
-  └── PIONEER/rekordbox/export.pdb
-         │
-         ▼
-  [rekord-extract]  Rust binary, parses PDB → JSON
-         │
-         ▼
-  [rekord2spotify]  Python CLI
-         │
-         ├── list     Show all history sessions
-         ├── export   Text tracklist output
-         └── playlist Create Spotify playlist
+$ rekord2spotify
+
+ rekord2spotify
+ ──────────────
+
+? Where's your history?
+  > 💾 USB drive: LIAMDJ4 (/Volumes/LIAMDJ4)
+    🖥  Rekordbox 5 on this computer (export a history file first)
+    📁 Import from file (text, M3U, or Rekordbox export)
 ```
 
-## Quick Start
+## Sources
 
-### 1. Build the Rust extractor
+| Source | How |
+|---|---|
+| **USB drive** | Plug in, auto-detected. Reads play history written by CDJs |
+| **Rekordbox 5** | Export a playlist in-app once (right-click → Export → text), then auto-found via Spotlight |
+| **Rekordbox 6/7** | Direct database access via `--source local` (requires pyrekordbox) |
+| **Import file** | Any text, M3U, M3U8, CSV, or Rekordbox TSV export |
+
+## Install
 
 ```bash
-make build
-# Or: cd extractor && cargo build --release
-```
+git clone git@github.com:brjl/rekord2spotify.git
+cd rekord2spotify
 
-### 2. Install the Python CLI
+# Build Rust extractor
+cd extractor && cargo build --release && cd ..
 
-```bash
-make install
+# Install Python CLI
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -e .
 ```
 
-### 3. List sessions on your USB
+## Usage
 
-```bash
-rekord2spotify list /Volumes/USB_DRIVE
-```
+Just run `rekord2spotify` — it walks you through everything.
 
-### 4. Export a session as text
+**Rekordbox 5 users:** In rekordbox, right-click a history playlist → Export Playlist → text format (the KUVO option). Files are auto-detected by Spotlight. Only needed once per session you want to export.
 
-```bash
-rekord2spotify export /Volumes/USB_DRIVE       # latest session
-rekord2spotify export /Volumes/USB_DRIVE -s "HISTORY 001"
-rekord2spotify export /Volumes/USB_DRIVE -d     # include BPM, key, duration
-rekord2spotify export /Volumes/USB_DRIVE -o my_set.txt
-```
+## Spotify (requires Premium)
 
-### 5. Create a Spotify playlist
-
-First, set up Spotify API credentials:
-
-1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-2. Create an app
-3. Go to Settings → Redirect URIs → Add `http://localhost:8888/callback`
-4. Create a `.env` file in your project directory:
+Create `.env` with credentials from https://developer.spotify.com/dashboard:
 
 ```
-SPOTIPY_CLIENT_ID=your-client-id-here
-SPOTIPY_CLIENT_SECRET=your-client-secret-here
-SPOTIPY_REDIRECT_URI=http://localhost:8888/callback
+SPOTIPY_CLIENT_ID=your-id
+SPOTIPY_CLIENT_SECRET=your-secret
 ```
 
-Then:
-
-```bash
-rekord2spotify playlist /Volumes/USB_DRIVE
-rekord2spotify playlist /Volumes/USB_DRIVE -s "HISTORY 002" -n "My Amazing Set"
-rekord2spotify playlist /Volumes/USB_DRIVE --dry-run   # check matches first
-```
-
-On first run, it'll open a browser for Spotify OAuth login. Credentials are cached at `~/.rekord2spotify_token`.
-
-## Spotify Matching
-
-The tool tries three strategies to find tracks on Spotify:
-
-1. **ISRC match** — exact match by International Standard Recording Code (most reliable, if rekordbox has it)
-2. **Artist + Title exact** — precise `artist:"Name" track:"Title"` search
-3. **Fuzzy match** — general search with substring verification
-
-If a duration is available, it also verifies the match is within ±10 seconds.
-
-Unmatched tracks are reported so you can add them manually.
+Then pick "Create Spotify playlist" in the app. First run opens a browser for OAuth.
 
 ## Requirements
 
-- **Rust** (for building the extractor)
-- **Python 3.8+** with pip
-- **Spotify Developer account** (free, for playlist creation)
-- **Rekordbox-exported USB drive** with playback history
+- Rust (to build the PDB extractor)
+- Python 3.8+
+- Rekordbox-exported USB drive, or Rekordbox 5 exported text files
+- Spotify Premium (for playlist creation only — printing and file export work without)
 
-## Project Structure
+## Notes
 
-```
-rekord2spotify/
-├── extractor/              # Rust binary (PDB → JSON)
-│   ├── Cargo.toml
-│   └── src/main.rs
-├── rekordcrate-local/      # Patched rekordcrate (pub fields)
-├── rekord2spotify/         # Python package
-│   ├── cli.py              # Click CLI (list, export, playlist)
-│   ├── extractor.py        # Calls Rust binary, parses JSON
-│   ├── spotify.py          # Spotify search + playlist creation
-│   └── tracklist.py        # Text formatting
-├── tests/                  # Test fixtures and tests
-├── pyproject.toml
-├── setup.py
-└── Makefile
-```
-
-## License
-
-MIT
+- USB history is cleared when you sync with Rekordbox. Read it before syncing.
+- Rekordbox 5 stores history locally in a proprietary format (`datafile.edb`) that has not been reverse-engineered. The in-app export is the workaround.
+- Rekordbox 6/7 direct database access is available if installed.
