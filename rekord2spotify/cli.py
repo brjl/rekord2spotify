@@ -95,8 +95,9 @@ def _load_from_choice(choice):
         questionary.print("  In rekordbox: right-click any history playlist")
         questionary.print("  → Export Playlist → choose text format")
         questionary.print("  (Use the 'Export for KUVO' option for best results)\n")
+        questionary.print("  Files are saved as 'HISTORY YYYY-MM-DD.txt'\n")
 
-        # Try to find recent exports
+        # Try to find recent exports via Spotlight (bypasses macOS folder permissions)
         recent = _find_recent_exports()
         choices = []
         if recent:
@@ -106,7 +107,7 @@ def _load_from_choice(choice):
                     value=str(f)
                 ))
         choices.append(questionary.Choice(
-            title="📂 Type or paste a file path...",
+            title="📂 Choose another file or paste path...",
             value="__browse__"
         ))
 
@@ -145,37 +146,19 @@ def _load_from_choice(choice):
 
 
 def _find_recent_exports():
-    """Find recently modified rekordbox export files."""
+    """Find rekordbox history export files using Spotlight."""
     recent = []
-    dirs = [Path.home() / "Desktop", Path.home() / "Downloads"]
-    # Documents is often permission-restricted on macOS, try it but don't fail
-    docs = Path.home() / "Documents"
-    if docs.exists():
-        try:
-            next(docs.iterdir())
-            dirs.insert(0, docs)
-        except (PermissionError, StopIteration):
-            pass
-
-    for d in dirs:
-        if not d.exists():
-            continue
-        try:
-            entries = sorted(d.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-        except (PermissionError, OSError):
-            continue
-        for f in entries:
-            if f.suffix.lower() in (".txt", ".m3u", ".m3u8", ".csv") and f.stat().st_size > 100:
-                try:
-                    first_bytes = f.read_bytes()[:50]
-                    if b"#EXTM3U" in first_bytes or b"Track Title" in first_bytes or b"Artist" in first_bytes:
-                        recent.append(f)
-                except Exception:
-                    pass
-            if len(recent) >= 5:
-                break
-        if len(recent) >= 5:
-            break
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["mdfind", "kMDItemDisplayName == 'HISTORY*' && kMDItemContentType == 'public.plain-text'"],
+            capture_output=True, text=True, timeout=5
+        )
+        paths = [Path(p.strip()) for p in result.stdout.strip().split("\n") if p.strip()]
+        paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        recent = [p for p in paths if p.exists() and p.stat().st_size > 100][:8]
+    except Exception:
+        pass
     return recent
 
 
