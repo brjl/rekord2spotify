@@ -9,7 +9,7 @@ $ rekord2spotify
  ──────────────
 
 ? Where's your history?
-  > 💾 USB drive: LIAMDJ4 (/Volumes/LIAMDJ4)
+  > 💾 USB: MY_USB (/Volumes/MY_USB)
     🖥  Rekordbox 5 on this computer (export a history file first)
     📁 Import from file (text, M3U, or Rekordbox export)
 ```
