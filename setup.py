@@ -8,6 +8,7 @@ setup(
         "click>=8.0",
         "spotipy>=2.23",
         "python-dotenv>=1.0",
+        "questionary>=2.0",
     ],
     entry_points={
         "console_scripts": [

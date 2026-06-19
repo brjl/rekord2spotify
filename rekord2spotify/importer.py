@@ -102,31 +102,16 @@ def _parse_rekordbox_tsv(lines: List[str]) -> List[dict]:
             continue
 
         # Columns: 0=#, 1=Artwork, 2=Track Title, 3=Artist, 4=Album, 5=Genre, 6=BPM, 7=Rating, 8=Time, 9=Key, 10=Date Added
-        position = cols[0].strip() if len(cols) > 0 else ""
-        title = cols[2].strip() if len(cols) > 2 else "Unknown Track"
-        artist = cols[3].strip() if len(cols) > 3 else "Unknown Artist"
-        album = cols[4].strip() if len(cols) > 4 else None
-        genre = cols[5].strip() if len(cols) > 5 else None
-        bpm_str = cols[6].strip() if len(cols) > 6 else ""
-        time_str = cols[8].strip() if len(cols) > 8 else ""
-        key = cols[9].strip() if len(cols) > 9 else None
+        title = cols[2].strip()
+        artist = cols[3].strip()
+        album = cols[4].strip() or None
+        genre = cols[5].strip() or None
+        bpm_str = cols[6].strip()
+        time_str = cols[8].strip()
+        key = cols[9].strip() or None
 
-        bpm = None
-        try:
-            bpm = float(bpm_str) if bpm_str else None
-        except ValueError:
-            pass
-
-        duration_sec = None
-        try:
-            parts = time_str.split(":")
-            if len(parts) == 2:
-                duration_sec = int(parts[0]) * 60 + int(parts[1])
-        except (ValueError, IndexError):
-            pass
-
-        # Handle tracks where title and artist are combined (rekordbox "Track Title" column)
-        if artist == "Unknown Artist" and " - " in title:
+        # Some tracks have artist embedded in title column (col 3 empty)
+        if not artist and " - " in title:
             parts = title.split(" - ", 1)
             artist, title = parts[0].strip(), parts[1].strip()
 

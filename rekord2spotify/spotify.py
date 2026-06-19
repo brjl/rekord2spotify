@@ -132,27 +132,18 @@ def search_track(sp: spotipy.Spotify, artist: str, title: str,
 
 
 def search_tracks_batch(sp: spotipy.Spotify, tracks: list) -> list:
-    """Search for multiple tracks. Returns list of (position, spotify_uri, title, artist).
-
-    Prints progress as it searches.
-    """
+    """Search for multiple tracks. Returns list of (position, spotify_uri, title, artist)."""
     results = []
     for i, entry in enumerate(tracks):
         artist = entry.get("artist", "Unknown Artist")
         title = entry.get("title", "Unknown Track")
         isrc = entry.get("isrc")
         duration = entry.get("duration_sec")
-
         position = entry.get("position", i + 1)
-        print(f"  [{position}/{len(tracks)}] Searching: {artist} — {title} ...", end=" ")
 
         uri = search_track(sp, artist, title, isrc, duration)
-
         if uri:
-            print("✓")
             results.append((position, uri, title, artist))
-        else:
-            print("✗ not found")
 
     return results
 

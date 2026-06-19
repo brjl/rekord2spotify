@@ -1,288 +1,286 @@
-"""CLI for rekord2spotify."""
+"""rekord2spotify — export rekordbox USB history as tracklists or Spotify playlists."""
 
+import os
 import sys
 from pathlib import Path
 
-import click
+import questionary
 
 from .extractor import (
     extract_history,
     get_latest_session,
-    get_session_by_name,
     find_usb_drives,
 )
+from .importer import import_playlist
 from .tracklist import format_tracklist, format_session_list
 
 
-def _resolve_usb_path(path):
-    """Auto-detect USB if not provided."""
-    if path:
-        return path
+def main():
+    """Interactive entry point."""
+    print()
+    questionary.print(" rekord2spotify", style="bold")
+    print(" ──────────────")
+    print()
 
-    usb_drives = find_usb_drives()
-    if not usb_drives:
-        click.echo("No rekordbox USB drives found.", err=True)
-        click.echo("Plug in a USB or specify --path", err=True)
-        sys.exit(1)
+    # Step 1: Where's the history?
+    sources = _build_source_list()
+    choice = questionary.select("Where's your history?", choices=sources).ask()
+    if choice is None:
+        return
 
-    if len(usb_drives) == 1:
-        click.echo(f"Drive: {usb_drives[0]}")
-        return usb_drives[0]
+    # Step 2: Load sessions
+    sessions = _load_from_choice(choice)
 
-    click.echo("Multiple drives:", err=True)
-    for d in usb_drives:
-        click.echo(f"  {d}", err=True)
-    sys.exit(1)
+    if not sessions:
+        questionary.print("No history sessions found.", style="bold red")
+        return
+
+    # Step 3: Pick session(s)
+    picked = _pick_sessions(sessions)
+    if not picked:
+        return
+
+    # Step 4: What to do?
+    _handle_output(picked)
 
 
-def _load_sessions(source_type, path):
-    """Load sessions from USB, local database, or imported playlist file."""
-    # If path is a text/playlist file, try importing it
-    if path and Path(path).is_file():
-        ext = Path(path).suffix.lower()
-        if ext in (".txt", ".m3u", ".m3u8", ".csv"):
-            from .importer import import_playlist
-            data = import_playlist(path)
-            return data.get("sessions", [])
+def _build_source_list():
+    """Build list of available sources."""
+    sources = []
 
-    if source_type == "local":
-        from .rekordbox_db import extract_history_local, find_master_db
-        db_path = path or find_master_db()
-        if not db_path:
-            click.echo("Rekordbox 6/7 master.db not found.", err=True)
-            click.echo("Expected: ~/Library/Pioneer/rekordbox/master.db", err=True)
-            sys.exit(1)
-        data = extract_history_local(db_path)
-    else:
-        path = _resolve_usb_path(path)
+    usb = find_usb_drives()
+    for drive in usb:
+        name = Path(drive).name
+        sources.append(questionary.Choice(
+            title=f"💾 USB drive: {name} ({drive})",
+            value=("usb", drive)
+        ))
+
+    if not usb:
+        sources.append(questionary.Choice(
+            title="💾 USB drive (none detected — plug one in)",
+            value=("usb_none", None),
+            disabled="No USB drives found"
+        ))
+
+    sources.append(questionary.Choice(
+        title="🖥  Rekordbox 5 on this computer (export a history file first)",
+        value=("rekordbox5", None)
+    ))
+
+    sources.append(questionary.Choice(
+        title="📁 Import from file (text, M3U, or Rekordbox export)",
+        value=("file", None)
+    ))
+
+    return sources
+
+
+def _load_from_choice(choice):
+    """Load sessions from the chosen source."""
+    source_type, path = choice
+
+    if source_type == "usb":
+        questionary.print(f"\nReading {path} ...", style="dim")
         data = extract_history(path)
+        return data.get("sessions", [])
 
-    return data.get("sessions", [])
+    elif source_type == "usb_none":
+        questionary.print("No USB drive found.", style="bold red")
+        return []
+
+    elif source_type == "rekordbox5":
+        questionary.print("\nRekordbox 5 stores history inside the app.")
+        questionary.print("You need to export it first:\n")
+        questionary.print("  In rekordbox: right-click a history playlist")
+        questionary.print("  → Export Playlist → choose text format")
+        questionary.print("  (Use the 'Export for KUVO' option for best results)\n")
+
+        # Try to find recent exports
+        recent = _find_recent_exports()
+        choices = []
+        for f in recent:
+            choices.append(questionary.Choice(
+                title=f"📄 {f.name} ({_time_ago(f)})",
+                value=str(f)
+            ))
+        choices.append(questionary.Choice(
+            title="📂 Choose another file...",
+            value="__browse__"
+        ))
+
+        filepath = questionary.select(
+            "Found these recent exports.\nPick one or choose another file:",
+            choices=choices
+        ).ask()
+
+        if filepath is None:
+            return []
+        if filepath == "__browse__":
+            filepath = questionary.path(
+                "Path to exported file:",
+                only_directories=False,
+            ).ask()
+            if not filepath:
+                return []
+
+        questionary.print(f"\nImporting {Path(filepath).name} ...", style="dim")
+        data = import_playlist(filepath)
+        return data.get("sessions", [])
+
+    elif source_type == "file":
+        filepath = questionary.path(
+            "Path to file (text, M3U, or Rekordbox export):",
+            only_directories=False,
+        ).ask()
+        if not filepath:
+            return []
+
+        questionary.print(f"\nImporting {Path(filepath).name} ...", style="dim")
+        data = import_playlist(filepath)
+        return data.get("sessions", [])
+
+    return []
 
 
-def _resolve_session(sessions, session):
-    """Resolve session by index, name, or 'latest'."""
-    if not sessions:
-        click.echo("No history sessions found.", err=True)
-        sys.exit(1)
+def _find_recent_exports():
+    """Find recently modified rekordbox export files."""
+    recent = []
+    dirs = [Path.home() / "Documents", Path.home() / "Desktop", Path.home() / "Downloads"]
+    for d in dirs:
+        if not d.exists():
+            continue
+        try:
+            entries = sorted(d.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+        except (PermissionError, OSError):
+            continue
+        for f in entries:
+            if f.suffix.lower() in (".txt", ".m3u", ".m3u8", ".csv") and f.stat().st_size > 100:
+                # Quick check if it looks like a playlist
+                try:
+                    first_bytes = f.read_bytes()[:50]
+                    if b"#EXTM3U" in first_bytes or b"Track Title" in first_bytes or b"Artist" in first_bytes:
+                        recent.append(f)
+                except Exception:
+                    pass
+            if len(recent) >= 5:
+                break
+        if len(recent) >= 5:
+            break
+    return recent
 
-    if session is None or session == "latest":
+
+def _time_ago(path):
+    """Human-readable time ago."""
+    import time
+    diff = time.time() - path.stat().st_mtime
+    if diff < 60:
+        return "just now"
+    if diff < 3600:
+        return f"{int(diff/60)}m ago"
+    if diff < 86400:
+        return f"{int(diff/3600)}h ago"
+    return f"{int(diff/86400)}d ago"
+
+
+def _pick_sessions(sessions):
+    """Let user pick one session, all, or latest."""
+    print()
+    questionary.print(f"{len(sessions)} session(s)\n", style="bold")
+    print(format_session_list(sessions, include_preview=True))
+    print()
+
+    choices = [
+        questionary.Choice(title="Latest session", value="latest"),
+        questionary.Choice(title="All sessions", value="all"),
+    ]
+    for i, s in enumerate(sessions, 1):
+        choices.append(questionary.Choice(
+            title=f"  {s['name']} — {len(s['tracks'])} tracks",
+            value=i - 1
+        ))
+
+    choice = questionary.select("Pick a session:", choices=choices).ask()
+    if choice is None:
+        return []
+
+    if choice == "latest":
         s = get_latest_session({"sessions": sessions})
-        if not s:
-            click.echo("No sessions found.", err=True)
-            sys.exit(1)
-        return s
-
-    # Try numeric index (1-based)
-    try:
-        idx = int(session) - 1
-        if 0 <= idx < len(sessions):
-            return sessions[idx]
-    except ValueError:
-        pass
-
-    # Try exact name
-    s = get_session_by_name({"sessions": sessions}, session)
-    if s:
-        return s
-
-    # Try partial match
-    session_lower = session.lower()
-    for s in sessions:
-        if session_lower in s["name"].lower():
-            return s
-
-    click.echo(f"Session '{session}' not found.", err=True)
-    click.echo(format_session_list(sessions), err=True)
-    sys.exit(1)
-
-
-# Shared options
-_path_option = click.option("--path", "-p", default=None, help="Path to USB or master.db")
-_session_arg = click.argument("session", required=False)
-
-
-@click.group()
-@click.version_option(version="0.1.0")
-@click.option("--source", "-s", "source_type",
-              type=click.Choice(["usb", "local"]), default="usb",
-              help="Data source: usb (default) or local (rekordbox 6/7)")
-@click.pass_context
-def main(ctx, source_type):
-    """rekord2spotify — export rekordbox history as tracklists or Spotify playlists.
-
-    \b
-    USB mode (plug in your drive):
-      rekord2spotify show
-      rekord2spotify export
-      rekord2spotify playlist
-
-    \b
-    Rekordbox 6/7 local database:
-      rekord2spotify --source local show
-      rekord2spotify --source local export
-      rekord2spotify --source local playlist
-    """
-    ctx.ensure_object(dict)
-    ctx.obj["source_type"] = source_type
-
-
-@main.command()
-@_path_option
-@click.pass_context
-def show(ctx, path):
-    """Show all history sessions."""
-    sessions = _load_sessions(ctx.obj["source_type"], path)
-
-    if not sessions:
-        click.echo("No history sessions found.")
-        return
-
-    click.echo(f"\n{len(sessions)} session(s)\n")
-    click.echo(format_session_list(sessions, include_preview=True))
-
-
-@main.command()
-@_path_option
-@_session_arg
-@click.option("--details", "-d", is_flag=True, help="Include BPM, key, and duration")
-@click.option("--output", "-o", type=click.Path(), help="Write to file")
-@click.pass_context
-def export(ctx, path, session, details, output):
-    """Export a session as a text tracklist.
-
-    SESSION: number (1 = first), name, or omit for latest.
-
-    \b
-    Examples:
-      rekord2spotify export
-      rekord2spotify export 2
-      rekord2spotify export -d
-      rekord2spotify export -o my_set.txt
-    """
-    sessions = _load_sessions(ctx.obj["source_type"], path)
-    session_data = _resolve_session(sessions, session)
-    text = format_tracklist(session_data, include_details=details)
-
-    if output:
-        Path(output).write_text(text + "\n")
-        click.echo(f"Saved to {output}")
+        return [s] if s else []
+    elif choice == "all":
+        return sessions
     else:
-        click.echo(text)
+        return [sessions[choice]]
 
 
-@main.command()
-@_path_option
-@_session_arg
-@click.option("--name", "-n", default=None, help="Playlist name")
-@click.option("--dry-run", is_flag=True, help="Search but don't create playlist")
-@click.pass_context
-def playlist(ctx, path, session, name, dry_run):
-    """Create a Spotify playlist from a history session.
+def _handle_output(sessions):
+    """Ask user what to do with selected sessions."""
+    total_tracks = sum(len(s["tracks"]) for s in sessions)
+    if len(sessions) == 1:
+        label = f"{sessions[0]['name']} — {total_tracks} tracks"
+    else:
+        label = f"{len(sessions)} sessions — {total_tracks} tracks"
 
-    SESSION: number (1 = first), name, or omit for latest.
+    print()
+    questionary.print(label, style="bold")
+    print()
 
-    One-time Spotify setup:
-      1. Go to https://developer.spotify.com/dashboard
-      2. Create an app + add http://localhost:8888/callback as redirect URI
-      3. Create .env with SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET
+    action = questionary.select(
+        "What do you want?",
+        choices=[
+            questionary.Choice(title="📋 Print tracklist", value="print"),
+            questionary.Choice(title="💾 Save to file", value="save"),
+            questionary.Choice(title="🟢 Create Spotify playlist(s)", value="spotify"),
+            questionary.Choice(title="All three", value="all"),
+        ]
+    ).ask()
 
-    \b
-    Examples:
-      rekord2spotify playlist
-      rekord2spotify playlist 2
-      rekord2spotify playlist -n "My Set"
-      rekord2spotify playlist --dry-run
-    """
-    sessions = _load_sessions(ctx.obj["source_type"], path)
-    session_data = _resolve_session(sessions, session)
-
-    tracks = session_data["tracks"]
-    session_name = session_data["name"]
-    click.echo(f"\n{session_name} — {len(tracks)} tracks\n")
-
-    from .spotify import (
-        _get_spotify_client,
-        search_tracks_batch,
-        create_spotify_playlist,
-        _check_credentials,
-    )
-
-    if not _check_credentials():
-        click.echo("Spotify credentials not set up.\n")
-        click.echo("Quick setup:")
-        click.echo("  1. Go to https://developer.spotify.com/dashboard")
-        click.echo("  2. Create an app (name it 'rekord2spotify')")
-        click.echo("  3. In Settings, add Redirect URI: http://localhost:8888/callback")
-        click.echo("  4. Copy Client ID and Client Secret")
-        click.echo("  5. Create .env file:")
-        click.echo("       echo 'SPOTIPY_CLIENT_ID=YOUR_ID' >> .env")
-        click.echo("       echo 'SPOTIPY_CLIENT_SECRET=YOUR_SECRET' >> .env")
-        click.echo("\nThen run: rekord2spotify playlist")
-        sys.exit(1)
-
-    sp = _get_spotify_client()
-    click.echo("Searching Spotify...")
-    matches = search_tracks_batch(sp, tracks)
-    click.echo()
-
-    matched = len(matches)
-    total = len(tracks)
-    pct = int(matched / total * 100) if total else 0
-    click.echo(f"Matched: {matched}/{total} ({pct}%)")
-
-    unmatched = total - matched
-    if unmatched:
-        click.echo(f"Not found: {unmatched}")
-
-    if dry_run:
-        click.echo("\n(Dry run — no playlist created)")
+    if action is None:
         return
 
-    if matched == 0:
-        click.echo("\nNo tracks found on Spotify.")
-        return
+    do_print = action in ("print", "all")
+    do_save = action in ("save", "all")
+    do_spotify = action in ("spotify", "all")
 
-    playlist_name = name or session_name
-    description = f"Exported from {session_name} via rekord2spotify"
+    # Spotify check once
+    sp = None
+    if do_spotify:
+        try:
+            from .spotify import _get_spotify_client, search_tracks_batch, create_spotify_playlist, _check_credentials
+            if not _check_credentials():
+                questionary.print("\nSpotify not set up.", style="bold red")
+                questionary.print("Create a .env file with SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET")
+                questionary.print("Get them at: https://developer.spotify.com/dashboard\n")
+                return
+            sp = _get_spotify_client()
+        except Exception as e:
+            questionary.print(f"\nSpotify error: {e}", style="bold red")
+            return
 
-    try:
-        url = create_spotify_playlist(sp, playlist_name, matches, description)
-        click.echo(f"\n  {playlist_name}")
-        click.echo(f"  {url}")
-    except Exception as e:
-        click.echo(f"\nError: {e}", err=True)
-        sys.exit(1)
+    for session in sessions:
+        name = session["name"]
+        tracks = session["tracks"]
 
+        if do_print:
+            print()
+            print(format_tracklist(session, include_details=True))
 
-@main.command(name="import")
-@click.argument("file", type=click.Path(exists=True))
-@click.option("--name", "-n", default=None, help="Playlist name (default: filename)")
-def import_(file, name):
-    """Import a playlist file exported from Rekordbox.
+        if do_save:
+            filename = f"{name}.txt".replace(" ", "_")
+            Path(filename).write_text(format_tracklist(session, include_details=True) + "\n")
+            questionary.print(f"  Saved {filename}")
 
-    Supports text, M3U, M3U8, and CSV formats.
+        if do_spotify and sp:
+            questionary.print(f"\n  Searching Spotify for {name} ...", style="dim")
+            matches = search_tracks_batch(sp, tracks)
+            if not matches:
+                questionary.print(f"  No tracks matched on Spotify.", style="bold red")
+                continue
 
-    \b
-    In Rekordbox: right-click a history playlist > Export Playlist >
-    choose text or M3U8 format. Then:
-
-    \b
-      rekord2spotify import ~/Desktop/history.txt
-      rekord2spotify export -p ~/Desktop/history.txt
-      rekord2spotify playlist -p ~/Desktop/history.txt
-    """
-    from .importer import import_playlist
-    data = import_playlist(file, name)
-    sessions = data.get("sessions", [])
-
-    if not sessions:
-        click.echo("No tracks found in file.")
-        return
-
-    session_data = sessions[0]
-    click.echo(f"\n{len(session_data['tracks'])} tracks\n")
-    click.echo(format_session_list(sessions, include_preview=True))
+            print()
+            questionary.print(f"  Matched {len(matches)}/{len(tracks)} tracks")
+            url = create_spotify_playlist(sp, name, matches, f"Exported from {name} via rekord2spotify")
+            questionary.print(f"  {url}", style="bold green")
 
 
 if __name__ == "__main__":
