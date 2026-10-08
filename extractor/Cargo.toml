@@ -2,7 +2,7 @@
 name = "rekord2spotify-extractor"
 version = "0.1.0"
 edition = "2021"
-description = "Extracts rekordbox history from export.pdb and outputs JSON"
+description = "Extracts rekordbox history from export.pdb or master.db and outputs JSON"
 
 [[bin]]
 name = "rekord-extract"
@@ -14,3 +14,10 @@ fallible-iterator = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+blowfish = "0.9"
+cipher = "0.4"
+generic-array = "0.14"
+base64 = "0.22"
+byteorder = "1"
+rusqlite = { version = "0.40", features = ["sqlcipher", "bundled-sqlcipher"] }
+shellexpand = "3"
