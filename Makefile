@@ -21,3 +21,7 @@ clean:
 # Extract history from a USB drive
 run:
 	extractor/target/release/rekord-extract $(ARGS)
+
+# Extract history from local rekordbox/rbxport database
+local:
+	extractor/target/release/rekord-extract --source local

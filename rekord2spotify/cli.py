@@ -83,6 +83,13 @@ def _load(choice):
     if source == "usb_none":
         return []
 
+    if source == "local":
+        questionary.print("\nReading rekordbox database ...", style="dim")
+        return extract_local().get("sessions", [])
+
+    if source == "local_none":
+        return []
+
     if source == "r5":
         return _load_r5()
 
