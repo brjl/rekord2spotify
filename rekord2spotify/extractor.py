@@ -55,6 +55,39 @@ def get_latest_session(data: dict) -> Optional[dict]:
     return sessions[-1] if sessions else None
 
 
+def extract_local() -> dict:
+    """Run rekord-extract --source local and return parsed JSON.
+
+    Reads history directly from the local rekordbox 6/7 or rbxport database.
+    No USB export needed.
+    """
+    result = subprocess.run(
+        [find_extractor_binary(), "--source", "local"],
+        capture_output=True, text=True, timeout=60,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Extractor failed (exit {result.returncode}):\n{result.stderr}")
+
+    output = result.stdout.strip()
+    if not output:
+        raise RuntimeError("Extractor produced no output")
+
+    return json.loads(output)
+
+
+def is_rekordbox_installed() -> bool:
+    """Check if rekordbox 6/7 or rbxport is installed.
+
+    Looks for the rekordboxAgent options.json used by all three.
+    """
+    agent_path = Path.home() / "Library" / "Application Support" / "Pioneer" / "rekordboxAgent" / "storage" / "options.json"
+    if agent_path.exists():
+        return True
+    rbx_path = Path.home() / "Library" / "Application Support" / "Pioneer" / "rbxport" / "storage" / "options.json"
+    return rbx_path.exists()
+
+
 def find_usb_drives() -> List[str]:
     """Find mounted USB drives containing PIONEER/rekordbox/export.pdb."""
     volumes = Path("/Volumes")

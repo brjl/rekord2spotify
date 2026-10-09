@@ -6,7 +6,7 @@ from pathlib import Path
 
 import questionary
 
-from .extractor import extract_history, get_latest_session, find_usb_drives
+from .extractor import extract_history, extract_local, get_latest_session, find_usb_drives, is_rekordbox_installed
 from .importer import import_playlist
 from .tracklist import format_tracklist, format_session_list
 
@@ -50,6 +50,17 @@ def _build_sources():
             title="💾 USB (none detected)",
             value=("usb_none", None),
             disabled="No USB drives found"
+        ))
+    if is_rekordbox_installed():
+        sources.append(questionary.Choice(
+            title="🖥  Rekordbox 6/7 / rbxport (read database directly)",
+            value=("local", None)
+        ))
+    else:
+        sources.append(questionary.Choice(
+            title="🖥  Rekordbox 6/7 / rbxport (not detected)",
+            value=("local_none", None),
+            disabled="No rekordbox or rbxport library found"
         ))
     sources.append(questionary.Choice(
         title="🖥  Rekordbox 5 (export a history file first)",

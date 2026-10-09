@@ -262,7 +262,7 @@ pub fn extract_history() -> Result<HistoryExport> {
             "SELECT ID, Title, COALESCE(ArtistID, '') as ArtistID, \
              COALESCE(AlbumID, '') as AlbumID, COALESCE(GenreID, '') as GenreID, \
              COALESCE(KeyID, '') as KeyID, BPM, Length, \
-             COALESCE(LabelID, '') as LabelID, DJPlayCount, Commnt \
+             COALESCE(LabelID, '') as LabelID, DJPlayCount, Commnt, ISRC \
              FROM djmdContent WHERE ID IS NOT NULL"
         )?;
         for r in stmt.query_map([], |row| {
@@ -273,16 +273,19 @@ pub fn extract_history() -> Result<HistoryExport> {
             let genre_id: Option<String> = row.get(4)?;
             let key_id: Option<String> = row.get(5)?;
             let bpm: Option<f64> = row.get(6)?;
-            let length: Option<f64> = row.get(7)?;  // in seconds
+            let length: Option<f64> = row.get(7)?;
             let label_id: Option<String> = row.get(8)?;
             let play_count: Option<i64> = row.get(9)?;
             let comment: Option<String> = row.get(10)?;
+            let isrc: Option<String> = row.get(11)?;
 
             let artist = artist_map.get(&artist_id).cloned().unwrap_or_default();
             let album = album_id.as_ref().and_then(|id| album_map.get(id)).cloned();
             let genre = genre_id.as_ref().and_then(|id| genre_map.get(id)).cloned();
             let key = key_id.as_ref().and_then(|id| key_map.get(id)).cloned();
             let label = label_id.as_ref().and_then(|id| label_map.get(id)).cloned();
+
+            let isrc = isrc.filter(|s| !s.is_empty());
 
             // Detect mix name from comment or title
             let mix_name = comment.and_then(|c| {
@@ -301,7 +304,7 @@ pub fn extract_history() -> Result<HistoryExport> {
                 duration_sec: length.map(|l| l as u32),
                 label,
                 play_count: play_count.unwrap_or(0) as u16,
-                isrc: None,  // djmdContent doesn't have ISRC directly
+                isrc,
             }))
         })? {
             let (id, track) = r?;
